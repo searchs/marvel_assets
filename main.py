@@ -1,8 +1,10 @@
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException, Query
+
 import httpx
 import hashlib
 import os
 import time
+from loguru import logger
 
 app = FastAPI(title="Marvel API With FastAPI", version="1.0.0")
 
@@ -10,6 +12,7 @@ app = FastAPI(title="Marvel API With FastAPI", version="1.0.0")
 PUBLIC_KEY = os.environ.get("marvel_pubkey", None)
 PRIVATE_KEY = os.environ.get("marvel_privkey", None)
 BASE_URL = "https://gateway.marvel.com:443/v1/public"
+BATCH_SIZE = 100  # Number of characters to retrieve per request - for manaaging respoinse size at least for now.
 
 
 def generate_marvel_hash(ts: str) -> str:
@@ -67,6 +70,7 @@ async def get_characters(limit: int = 10, offset: int = 0):
         response = await client.get(url, params=params)
 
     if response.status_code != 200:
+        logger.info("looks like we did not get the right result.")
         raise HTTPException(
             status_code=response.status_code, detail="Failed to fetch characters"
         )
@@ -91,6 +95,7 @@ async def get_character(character_id: int):
     params = get_auth_params()
 
     async with httpx.AsyncClient() as client:
+        logger.info("looks like we did got some good result.")
         response = await client.get(url, params=params)
 
     if response.status_code != 200:
@@ -157,3 +162,65 @@ async def get_series(limit: int = 10, offset: int = 0):
         )
 
     return response.json()
+
+
+async def fetch_character_batch(limit: int, offset: int):
+    """Fetch a batch of characters from the Marvel API.
+
+    Args:
+        limit (int): The number of characters to fetch in this batch.
+        offset (int): The starting index for the batch.
+
+    Returns:
+        list: A list of characters with their name and comic count.
+    """
+    url = f"{BASE_URL}/characters"
+    params = get_auth_params()
+    params.update({"limit": limit, "offset": offset})
+
+    async with httpx.AsyncClient() as client:
+        response = await client.get(url, params=params)
+
+    if response.status_code != 200:
+        raise HTTPException(
+            status_code=response.status_code,
+            detail="Failed to fetch characters",
+        )
+
+    data = response.json()
+    return [
+        {"name": char["name"], "comics_count": char["comics"]["available"]}
+        for char in data["data"]["results"]
+    ]
+
+
+@app.get("/characters_comics")
+async def get_all_characters_comics(limit: int = Query(100, ge=1)):
+    """Fetch all characters and the quantity of comics in which they appear up to a specified limit.
+
+    Args:
+        limit (int, optional): The maximum number of characters to retrieve. Defaults to 100.
+
+    Returns:
+        dict: A dictionary where each key is a character name, and the value is the number of comics they appear in.
+    """
+    characters_comics = {}
+    offset = 0
+    total_retrieved = 0
+
+    while total_retrieved < limit:
+        batch_size = min(BATCH_SIZE, limit - total_retrieved)
+        batch = await fetch_character_batch(batch_size, offset)
+        offset += batch_size
+        total_retrieved += len(batch)
+
+        # Update the main dictionary with character comic count
+        for character in batch:
+            characters_comics[character["name"]] = character["comics_count"]
+
+        if (
+            len(batch) < BATCH_SIZE
+        ):  # End loop if fewer items than requested are returned
+            break
+
+    return characters_comics
