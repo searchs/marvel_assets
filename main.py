@@ -1,5 +1,4 @@
 from fastapi import FastAPI, HTTPException, Query
-
 import httpx
 import hashlib
 import os
@@ -16,11 +15,11 @@ app = FastAPI(title="Marvel API With FastAPI", version="1.0.0")
 PUBLIC_KEY = os.environ.get("marvel_pubkey", None)
 PRIVATE_KEY = os.environ.get("marvel_privkey", None)
 BASE_URL = "https://gateway.marvel.com:443/v1/public"
-BATCH_SIZE = 50  # Number of characters to retrieve per request - for manaaging respoinse size at least for now.
+BATCH_SIZE = 50  # Number of characters to retrieve per request
 
 
 def generate_marvel_hash(ts: str) -> str:
-    """Generate a hash for Marvel API authentication.
+    """Generates an MD5 hash for Marvel API authentication.
 
     Args:
         ts (str): The timestamp for the request.
@@ -32,11 +31,17 @@ def generate_marvel_hash(ts: str) -> str:
     return hashlib.md5(to_hash.encode()).hexdigest()
 
 
-def get_auth_params():
-    """Generate authentication parameters for the Marvel API.
+def get_auth_params() -> dict:
+    """Generates authentication parameters for the Marvel API.
 
     Returns:
-        dict: A dictionary with the timestamp, API key, and hash required for authentication.
+        dict: A dictionary containing the timestamp, API key, and hash required for authentication.
+
+    This dictionary includes:
+        - ts: The timestamp for the request.
+        - apikey: The Marvel API public key.
+        - hash: The MD5 hash generated using the timestamp, private key, and public key.
+        - orderBy: Sorts characters by name (optional).
     """
     ts = str(time.time())
     return {
@@ -49,17 +54,23 @@ def get_auth_params():
 
 @app.get("/")
 def base():
-    """Base endpoint to confirm the API is running.
+    """
+    Base endpoint to confirm the API is running.
 
     Returns:
         dict: A message indicating the Marvel API app status and version.
+
+    This endpoint returns a dictionary with the following keys:
+        - message: A string indicating "Marvel API app".
+        - version: The version of the API (currently "0.0.1").
     """
     return {"message": "Marvel API app", "version:": "0.0.1"}
 
 
 @app.get("/characters")
 async def get_characters_with_info(limit: int = 10, offset: int = 0):
-    """Fetch a list of Marvel characters in async fashion.
+    """
+    Fetches a list of Marvel characters asynchronously.
 
     Args:
         limit (int, optional): Number of characters to return. Defaults to 10.
@@ -90,7 +101,8 @@ async def get_characters_with_info(limit: int = 10, offset: int = 0):
 async def fetch_character_batch(
     limit: int, offset: int, name: str = None
 ) -> List[Dict]:
-    """Fetch a batch of characters from the Marvel API with flexible name matching.
+    """
+    Fetches a batch of characters from the Marvel API with flexible name matching.
 
     Args:
         limit (int): The number of characters to fetch in this batch.
@@ -100,6 +112,9 @@ async def fetch_character_batch(
 
     Returns:
         list: A list of characters with their name and comic count.
+
+    Raises:
+        HTTPException: If the request to the Marvel API fails.
 
     Example matches:
         - "spider" would match "Spider-Man", "Spider-Woman", "Spider-Girl"
@@ -154,13 +169,17 @@ async def fetch_character_batch(
 
 
 def standardize_name(name: str) -> str:
-    """Standardize character name for consistent matching.
+    """
+    Standardizes a character name for consistent matching.
 
     Args:
         name (str): The character name to standardize.
 
     Returns:
         str: Standardized name with consistent formatting.
+
+    This function removes parenthetical information, special characters (except hyphens),
+    and extra whitespace, making the name suitable for comparison and search.
     """
     # Remove parenthetical information
     name = re.sub(r"\s*\([^)]*\)", "", name)
@@ -175,7 +194,8 @@ def standardize_name(name: str) -> str:
 
 
 async def search_characters(search_name: str, limit: int = 20) -> List[Dict]:
-    """Search for characters with flexible name matching.
+    """
+    Searches for characters with flexible name matching.
 
     Args:
         search_name (str): The name pattern to search for.
@@ -183,6 +203,9 @@ async def search_characters(search_name: str, limit: int = 20) -> List[Dict]:
 
     Returns:
         List[Dict]: List of matching characters with their comic counts.
+
+    Raises:
+        HTTPException: If the request to the Marvel API fails.
     """
     try:
         chars = await fetch_character_batch(limit=limit, offset=0, name=search_name)
@@ -198,7 +221,8 @@ async def search_characters(search_name: str, limit: int = 20) -> List[Dict]:
 async def get_all_characters_names(
     limit: int = Query(20, ge=1), offset: int = Query(0, ge=0)
 ):
-    """Fetch characters and the quantity of comics in which they appear with pagination.
+    """
+    Fetches characters and the quantity of comics in which they appear with pagination.
 
     Args:
         limit (int, optional): The maximum number of characters to retrieve. Defaults to 100.
@@ -236,7 +260,8 @@ async def search_characters_endpoint(name: str, limit: int = 20):
 async def get_character_by_name(
     character_name: str, limit: int = Query(10, ge=1), offset: int = Query(0, ge=0)
 ):
-    """Fetch comic count for a specific character by name, with pagination.
+    """
+    Fetches comic count for a specific character by name, with pagination.
 
     Args:
         character_name (str): The name of the character to search for.
@@ -245,6 +270,9 @@ async def get_character_by_name(
 
     Returns:
         dict: A dictionary where the key is the character's name and the value is the number of comics they appear in.
+
+    Raises:
+        HTTPException: If no character is found with the given name.
     """
     characters = await fetch_character_batch(
         limit=limit, offset=offset, name=character_name
