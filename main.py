@@ -153,7 +153,6 @@ async def fetch_character_batch(
         ]
 
 
-# Example helper function to clean and standardize character names
 def standardize_name(name: str) -> str:
     """Standardize character name for consistent matching.
 
@@ -175,7 +174,6 @@ def standardize_name(name: str) -> str:
     return name.strip()
 
 
-# Example usage:
 async def search_characters(search_name: str, limit: int = 20) -> List[Dict]:
     """Search for characters with flexible name matching.
 
