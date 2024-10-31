@@ -4,6 +4,8 @@ import httpx
 import hashlib
 import os
 import time
+import re
+from typing import List, Dict
 
 from loguru import logger
 
@@ -83,45 +85,6 @@ async def get_characters_with_info(limit: int = 10, offset: int = 0):
         )
 
     return response.json()
-
-
-# async def fetch_character_batch(limit: int, offset: int, name: str = None):
-#     """Fetch a batch of characters from the Marvel API.
-
-#     Args:
-#         limit (int): The number of characters to fetch in this batch.
-#         offset (int): The starting index for the batch.
-#         name (str, optional): The name of the character to search for. Defaults to None.
-
-#     Returns:
-#         list: A list of characters with their name and comic count.
-#     """
-#     url = f"{BASE_URL}/characters"
-#     params = get_auth_params()
-#     params.update({"limit": limit, "offset": offset})
-#     # TODO: use a wider search as some names have  extra info
-#     if name:
-#         params["name"] = name
-
-#     async with httpx.AsyncClient() as client:
-#         response = await client.get(url, params=params)
-
-#     if response.status_code != 200:
-#         raise HTTPException(
-#             status_code=response.status_code,
-#             detail="Failed to fetch characters",
-#         )
-
-#     data = response.json()
-#     return [
-#         {"name": char["name"], "comics_count": char["comics"]["available"]}
-#         for char in data["data"]["results"]
-#     ]
-
-import re
-from typing import List, Dict
-from fastapi import FastAPI, HTTPException
-import httpx
 
 
 async def fetch_character_batch(
@@ -294,32 +257,3 @@ async def get_character_by_name(
         )
 
     return {character["name"]: character["comics_count"] for character in characters}
-
-
-@app.get("/comics")
-async def get_comics(limit: int = 10, offset: int = 0):
-    """Fetch a list of Marvel comics.
-
-    Args:
-        limit (int, optional): Number of comics to return. Defaults to 10.
-        offset (int, optional): The starting index for the list of comics. Defaults to 0.
-
-    Returns:
-        dict: The JSON response containing the list of comics.
-
-    Raises:
-        HTTPException: If the request to the Marvel API fails.
-    """
-    url = f"{BASE_URL}/comics"
-    params = get_auth_params()
-    params.update({"limit": limit, "offset": offset})
-
-    async with httpx.AsyncClient() as client:
-        response = await client.get(url, params=params)
-
-    if response.status_code != 200:
-        raise HTTPException(
-            status_code=response.status_code, detail="Failed to fetch comics"
-        )
-
-    return response.json()
