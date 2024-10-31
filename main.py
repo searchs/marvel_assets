@@ -4,7 +4,9 @@ import httpx
 import hashlib
 import os
 import time
+
 from loguru import logger
+
 
 app = FastAPI(title="Marvel API With FastAPI", version="1.0.0")
 
@@ -35,7 +37,12 @@ def get_auth_params():
         dict: A dictionary with the timestamp, API key, and hash required for authentication.
     """
     ts = str(time.time())
-    return {"ts": ts, "apikey": PUBLIC_KEY, "hash": generate_marvel_hash(ts)}
+    return {
+        "ts": ts,
+        "apikey": PUBLIC_KEY,
+        "hash": generate_marvel_hash(ts),
+        "orderBy": "name",
+    }
 
 
 @app.get("/")
@@ -49,7 +56,7 @@ def base():
 
 
 @app.get("/characters")
-async def get_characters(limit: int = 10, offset: int = 0):
+async def get_characters_with_info(limit: int = 10, offset: int = 0):
     """Fetch a list of Marvel characters in async fashion.
 
     Args:
@@ -78,105 +85,83 @@ async def get_characters(limit: int = 10, offset: int = 0):
     return response.json()
 
 
-@app.get("/characters/{character_id}")
-async def get_character(character_id: int):
-    """Fetch details about a specific Marvel character by ID.
+# async def fetch_character_batch(limit: int, offset: int, name: str = None):
+#     """Fetch a batch of characters from the Marvel API.
 
-    Args:
-        character_id (int): The unique ID of the character.
+#     Args:
+#         limit (int): The number of characters to fetch in this batch.
+#         offset (int): The starting index for the batch.
+#         name (str, optional): The name of the character to search for. Defaults to None.
 
-    Returns:
-        dict: The JSON response containing the character's details.
+#     Returns:
+#         list: A list of characters with their name and comic count.
+#     """
+#     url = f"{BASE_URL}/characters"
+#     params = get_auth_params()
+#     params.update({"limit": limit, "offset": offset})
+#     # TODO: use a wider search as some names have  extra info
+#     if name:
+#         params["name"] = name
 
-    Raises:
-        HTTPException: If the request to the Marvel API fails.
-    """
-    url = f"{BASE_URL}/characters/{character_id}"
-    params = get_auth_params()
+#     async with httpx.AsyncClient() as client:
+#         response = await client.get(url, params=params)
 
-    async with httpx.AsyncClient() as client:
-        logger.info("looks like we did got some good result.")
-        response = await client.get(url, params=params)
+#     if response.status_code != 200:
+#         raise HTTPException(
+#             status_code=response.status_code,
+#             detail="Failed to fetch characters",
+#         )
 
-    if response.status_code != 200:
-        raise HTTPException(
-            status_code=response.status_code, detail="Failed to fetch character"
-        )
+#     data = response.json()
+#     return [
+#         {"name": char["name"], "comics_count": char["comics"]["available"]}
+#         for char in data["data"]["results"]
+#     ]
 
-    return response.json()
-
-
-@app.get("/comics")
-async def get_comics(limit: int = 10, offset: int = 0):
-    """Fetch a list of Marvel comics.
-
-    Args:
-        limit (int, optional): Number of comics to return. Defaults to 10.
-        offset (int, optional): The starting index for the list of comics. Defaults to 0.
-
-    Returns:
-        dict: The JSON response containing the list of comics.
-
-    Raises:
-        HTTPException: If the request to the Marvel API fails.
-    """
-    url = f"{BASE_URL}/comics"
-    params = get_auth_params()
-    params.update({"limit": limit, "offset": offset})
-
-    async with httpx.AsyncClient() as client:
-        response = await client.get(url, params=params)
-
-    if response.status_code != 200:
-        raise HTTPException(
-            status_code=response.status_code, detail="Failed to fetch comics"
-        )
-
-    return response.json()
+import re
+from typing import List, Dict
+from fastapi import FastAPI, HTTPException
+import httpx
 
 
-@app.get("/series")
-async def get_series(limit: int = 10, offset: int = 0):
-    """Fetch a list of Marvel series.
-
-    Args:
-        limit (int, optional): Number of series to return. Defaults to 10.
-        offset (int, optional): The starting index for the list of series. Defaults to 0.
-
-    Returns:
-        dict: The JSON response containing the list of series.
-
-    Raises:
-        HTTPException: If the request to the Marvel API fails.
-    """
-    url = f"{BASE_URL}/series"
-    params = get_auth_params()
-    params.update({"limit": limit, "offset": offset})
-
-    async with httpx.AsyncClient() as client:
-        response = await client.get(url, params=params)
-
-    if response.status_code != 200:
-        raise HTTPException(
-            status_code=response.status_code, detail="Failed to fetch series"
-        )
-
-    return response.json()
-
-
-async def fetch_character_batch(limit: int, offset: int):
-    """Fetch a batch of characters from the Marvel API.
+async def fetch_character_batch(
+    limit: int, offset: int, name: str = None
+) -> List[Dict]:
+    """Fetch a batch of characters from the Marvel API with flexible name matching.
 
     Args:
         limit (int): The number of characters to fetch in this batch.
         offset (int): The starting index for the batch.
+        name (str, optional): The name pattern to search for. Supports partial matches
+            and ignores case and special characters. Defaults to None.
 
     Returns:
         list: A list of characters with their name and comic count.
+
+    Example matches:
+        - "spider" would match "Spider-Man", "Spider-Woman", "Spider-Girl"
+        - "spider man" would match "Spider-Man", "Spider-Man (Ultimate)", etc.
+        - "peter parker" would match "Peter Parker", "Peter Parker (Ultimate)", etc.
     """
     url = f"{BASE_URL}/characters"
     params = get_auth_params()
     params.update({"limit": limit, "offset": offset})
+
+    if name:
+        # Clean and prepare the search pattern
+        search_term = name.split()[0]  # Take first word for API search
+
+        # Create regex pattern:
+        # 1. Escape special regex characters
+        # 2. Replace spaces with flexible whitespace/separator pattern
+        # 3. Make the pattern case insensitive
+        pattern = re.escape(name)
+        pattern = pattern.replace(r"\ ", r"[\s-]*")
+        pattern = f"^{pattern}"
+        regex = re.compile(pattern, re.IGNORECASE)
+
+        # Use nameStartsWith for broader initial search
+        params["nameStartsWith"] = search_term
 
     async with httpx.AsyncClient() as client:
         response = await client.get(url, params=params)
@@ -188,15 +173,69 @@ async def fetch_character_batch(limit: int, offset: int):
         )
 
     data = response.json()
-    return [
-        {"name": char["name"], "comics_count": char["comics"]["available"]}
-        for char in data["data"]["results"]
-    ]
+    results = data["data"]["results"]
+
+    # Filter results using regex if name pattern was provided
+    if name and results:
+        filtered_chars = [
+            {"name": char["name"], "comics_count": char["comics"]["available"]}
+            for char in results
+            if regex.search(char["name"])
+        ]
+        return filtered_chars
+    else:
+        return [
+            {"name": char["name"], "comics_count": char["comics"]["available"]}
+            for char in results
+        ]
 
 
-@app.get("/characters_comics")
-async def get_all_characters_comics(
-    limit: int = Query(100, ge=1), offset: int = Query(0, ge=0)
+# Example helper function to clean and standardize character names
+def standardize_name(name: str) -> str:
+    """Standardize character name for consistent matching.
+
+    Args:
+        name (str): The character name to standardize.
+
+    Returns:
+        str: Standardized name with consistent formatting.
+    """
+    # Remove parenthetical information
+    name = re.sub(r"\s*\([^)]*\)", "", name)
+
+    # Remove special characters except hyphen
+    name = re.sub(r"[^\w\s-]", "", name)
+
+    # Replace multiple spaces/separators with single space
+    name = re.sub(r"[\s-]+", " ", name)
+
+    return name.strip()
+
+
+# Example usage:
+async def search_characters(search_name: str, limit: int = 20) -> List[Dict]:
+    """Search for characters with flexible name matching.
+
+    Args:
+        search_name (str): The name pattern to search for.
+        limit (int, optional): Maximum number of results to return. Defaults to 20.
+
+    Returns:
+        List[Dict]: List of matching characters with their comic counts.
+    """
+    try:
+        chars = await fetch_character_batch(limit=limit, offset=0, name=search_name)
+        return chars
+    except HTTPException as e:
+        raise HTTPException(
+            status_code=e.status_code,
+            detail=f"Error searching for character: {e.detail}",
+        )
+
+
+@app.get("/characters_all")
+async def get_all_characters_names(
+    limit: int = Query(20, ge=1), offset: int = Query(0, ge=0)
 ):
     """Fetch characters and the quantity of comics in which they appear with pagination.
 
@@ -227,30 +266,60 @@ async def get_all_characters_comics(
     return characters_comics
 
 
-@app.get("/character_comics/{character_name}")
-async def get_character_comics(character_name: str):
-    """Fetch a single character's comic count by their name.
+@app.get("/characters/search/{name}")
+async def search_characters_endpoint(name: str, limit: int = 20):
+    return await search_characters(name, limit)
+
+
+@app.get("/characters/{character_name}")
+async def get_character_by_name(
+    character_name: str, limit: int = Query(10, ge=1), offset: int = Query(0, ge=0)
+):
+    """Fetch comic count for a specific character by name, with pagination.
 
     Args:
         character_name (str): The name of the character to search for.
+        limit (int, optional): The maximum number of results to retrieve. Defaults to 10.
+        offset (int, optional): The starting index for retrieving results. Defaults to 0.
 
     Returns:
-        dict: A dictionary with the character name and the number of comics they appear in.
+        dict: A dictionary where the key is the character's name and the value is the number of comics they appear in.
     """
-    offset = 0
+    characters = await fetch_character_batch(
+        limit=limit, offset=offset, name=character_name
+    )
+    if not characters:
+        raise HTTPException(
+            status_code=404, detail=f"No character found with name {character_name}"
+        )
 
-    while True:
-        # Retrieve characters in batches until the character is found or all results are exhausted
-        batch = await fetch_character_batch(BATCH_SIZE, offset)
-        for character in batch:
-            if character["name"].lower() == character_name.lower():
-                return {character["name"]: character["comics_count"]}
+    return {character["name"]: character["comics_count"] for character in characters}
 
-        # Move to the next batch
-        offset += BATCH_SIZE
 
-        # Break if no more characters are returned in the batch
-        if len(batch) < BATCH_SIZE:
-            break
+@app.get("/comics")
+async def get_comics(limit: int = 10, offset: int = 0):
+    """Fetch a list of Marvel comics.
 
-    raise HTTPException(status_code=404, detail="Character not found")
+    Args:
+        limit (int, optional): Number of comics to return. Defaults to 10.
+        offset (int, optional): The starting index for the list of comics. Defaults to 0.
+
+    Returns:
+        dict: The JSON response containing the list of comics.
+
+    Raises:
+        HTTPException: If the request to the Marvel API fails.
+    """
+    url = f"{BASE_URL}/comics"
+    params = get_auth_params()
+    params.update({"limit": limit, "offset": offset})
+
+    async with httpx.AsyncClient() as client:
+        response = await client.get(url, params=params)
+
+    if response.status_code != 200:
+        raise HTTPException(
+            status_code=response.status_code, detail="Failed to fetch comics"
+        )
+
+    return response.json()
