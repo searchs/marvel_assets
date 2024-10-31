@@ -12,7 +12,7 @@ app = FastAPI(title="Marvel API With FastAPI", version="1.0.0")
 PUBLIC_KEY = os.environ.get("marvel_pubkey", None)
 PRIVATE_KEY = os.environ.get("marvel_privkey", None)
 BASE_URL = "https://gateway.marvel.com:443/v1/public"
-BATCH_SIZE = 100  # Number of characters to retrieve per request - for manaaging respoinse size at least for now.
+BATCH_SIZE = 50  # Number of characters to retrieve per request - for manaaging respoinse size at least for now.
 
 
 def generate_marvel_hash(ts: str) -> str:
@@ -195,26 +195,27 @@ async def fetch_character_batch(limit: int, offset: int):
 
 
 @app.get("/characters_comics")
-async def get_all_characters_comics(limit: int = Query(100, ge=1)):
-    """Fetch all characters and the quantity of comics in which they appear up to a specified limit.
+async def get_all_characters_comics(
+    limit: int = Query(100, ge=1), offset: int = Query(0, ge=0)
+):
+    """Fetch characters and the quantity of comics in which they appear with pagination.
 
     Args:
         limit (int, optional): The maximum number of characters to retrieve. Defaults to 100.
+        offset (int, optional): The starting index for retrieving characters. Defaults to 0.
 
     Returns:
         dict: A dictionary where each key is a character name, and the value is the number of comics they appear in.
     """
     characters_comics = {}
-    offset = 0
     total_retrieved = 0
 
     while total_retrieved < limit:
         batch_size = min(BATCH_SIZE, limit - total_retrieved)
-        batch = await fetch_character_batch(batch_size, offset)
-        offset += batch_size
+        batch = await fetch_character_batch(batch_size, offset + total_retrieved)
         total_retrieved += len(batch)
 
-        # Update the main dictionary with character comic count
+        # Update the results dictionary with character comic count
         for character in batch:
             characters_comics[character["name"]] = character["comics_count"]
 
@@ -224,3 +225,32 @@ async def get_all_characters_comics(limit: int = Query(100, ge=1)):
             break
 
     return characters_comics
+
+
+@app.get("/character_comics/{character_name}")
+async def get_character_comics(character_name: str):
+    """Fetch a single character's comic count by their name.
+
+    Args:
+        character_name (str): The name of the character to search for.
+
+    Returns:
+        dict: A dictionary with the character name and the number of comics they appear in.
+    """
+    offset = 0
+
+    while True:
+        # Retrieve characters in batches until the character is found or all results are exhausted
+        batch = await fetch_character_batch(BATCH_SIZE, offset)
+        for character in batch:
+            if character["name"].lower() == character_name.lower():
+                return {character["name"]: character["comics_count"]}
+
+        # Move to the next batch
+        offset += BATCH_SIZE
+
+        # Break if no more characters are returned in the batch
+        if len(batch) < BATCH_SIZE:
+            break
+
+    raise HTTPException(status_code=404, detail="Character not found")
